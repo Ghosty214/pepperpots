@@ -1,0 +1,159 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isApprovedMember() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/members/$(request.auth.uid))
+        && get(/databases/$(database)/documents/members/$(request.auth.uid)).data.active == true;
+    }
+
+    function validStats(stats) {
+      return stats is map
+        && stats.keys().hasAll(['vitality', 'endurance', 'focus', 'discipline'])
+        && stats.keys().hasOnly(['vitality', 'endurance', 'focus', 'discipline'])
+        && stats.vitality is int && stats.vitality >= 0
+        && stats.endurance is int && stats.endurance >= 0
+        && stats.focus is int && stats.focus >= 0
+        && stats.discipline is int && stats.discipline >= 0;
+    }
+
+    function validPersonalState(data) {
+      return data.keys().hasAll([
+          'xp', 'level', 'streak', 'questClears', 'lastQuestClearDate',
+          'stats', 'dailyQuest', 'questHistory', 'recoveryHistory',
+          'physicalProgression', 'weeklyTrailFinder', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'xp', 'level', 'streak', 'questClears', 'lastQuestClearDate',
+          'stats', 'dailyQuest', 'questHistory', 'recoveryHistory',
+          'physicalProgression', 'weeklyTrailFinder', 'updatedAt'
+        ])
+        && data.xp is int && data.xp >= 0
+        && data.level is int && data.level >= 1
+        && data.streak is int && data.streak >= 0
+        && data.questClears is int && data.questClears >= 0
+        && data.lastQuestClearDate is string && data.lastQuestClearDate.size() <= 10
+        && validStats(data.stats)
+        && data.dailyQuest is map
+        && data.questHistory is list && data.questHistory.size() <= 60
+        && data.recoveryHistory is list && data.recoveryHistory.size() <= 60
+        && data.physicalProgression is map
+        && data.weeklyTrailFinder is map
+        && data.updatedAt == request.time;
+    }
+
+    function validSchedule(schedule) {
+      return schedule is map
+        && schedule.keys().hasAll(['Edit', 'Cook', 'Decorate', 'Clean'])
+        && schedule.keys().hasOnly(['Edit', 'Cook', 'Decorate', 'Clean'])
+        && schedule.Edit is list && schedule.Edit.size() <= 100
+        && schedule.Cook is list && schedule.Cook.size() <= 100
+        && schedule.Decorate is list && schedule.Decorate.size() <= 100
+        && schedule.Clean is list && schedule.Clean.size() <= 100;
+    }
+
+    function validHomeState(data) {
+      return data.keys().hasAll(['schedule', 'projectQueue', 'updatedAt'])
+        && data.keys().hasOnly(['schedule', 'projectQueue', 'updatedAt'])
+        && validSchedule(data.schedule)
+        && data.projectQueue is list && data.projectQueue.size() <= 100
+        && data.updatedAt == request.time;
+    }
+
+    function validCategory(category) {
+      return category in ['Work', 'Doctor', 'Appointment', 'Personal', 'Home', 'Family', 'Other'];
+    }
+
+    function validReminder(reminder) {
+      return reminder in ['NONE', '10_MINUTES', '30_MINUTES', '1_HOUR', '1_DAY'];
+    }
+
+    function validRepeat(repeat) {
+      return repeat in ['NONE', 'DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'];
+    }
+
+    function validEvent(data, expectedVisibility, expectedOwner) {
+      return data.keys().hasAll([
+          'ownerUid', 'title', 'category', 'date', 'startTime', 'endTime',
+          'location', 'notes', 'reminder', 'repeat', 'visibility',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerUid', 'title', 'category', 'date', 'startTime', 'endTime',
+          'location', 'notes', 'reminder', 'repeat', 'visibility',
+          'createdAt', 'updatedAt'
+        ])
+        && data.ownerUid == expectedOwner
+        && data.visibility == expectedVisibility
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 160
+        && validCategory(data.category)
+        && data.date is string && data.date.size() == 10
+        && data.startTime is string && data.startTime.size() <= 5
+        && data.endTime is string && data.endTime.size() <= 5
+        && data.location is string && data.location.size() <= 300
+        && data.notes is string && data.notes.size() <= 3000
+        && validReminder(data.reminder)
+        && validRepeat(data.repeat)
+        && data.createdAt is timestamp
+        && data.updatedAt == request.time;
+    }
+
+    match /members/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow list, create, update, delete: if false;
+    }
+
+    match /users/{uid}/state/main {
+      allow get: if isApprovedMember() && request.auth.uid == uid;
+      allow create, update: if isApprovedMember()
+        && request.auth.uid == uid
+        && validPersonalState(request.resource.data);
+      allow delete: if false;
+    }
+
+    match /users/{uid}/events/{eventId} {
+      allow get, list: if isApprovedMember() && request.auth.uid == uid;
+      allow create: if isApprovedMember()
+        && request.auth.uid == uid
+        && validEvent(request.resource.data, 'PRIVATE', uid);
+      allow update: if isApprovedMember()
+        && request.auth.uid == uid
+        && resource.data.ownerUid == uid
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.visibility == resource.data.visibility
+        && request.resource.data.createdAt == resource.data.createdAt
+        && validEvent(request.resource.data, 'PRIVATE', uid);
+      allow delete: if isApprovedMember()
+        && request.auth.uid == uid
+        && resource.data.ownerUid == uid;
+    }
+
+    match /households/pepperpots/state/home {
+      allow get: if isApprovedMember();
+      allow create, update: if isApprovedMember() && validHomeState(request.resource.data);
+      allow delete: if false;
+    }
+
+    match /households/pepperpots/events/{eventId} {
+      allow get, list: if isApprovedMember();
+      allow create: if isApprovedMember()
+        && validEvent(request.resource.data, 'SHARED', request.auth.uid);
+      allow update: if isApprovedMember()
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.visibility == resource.data.visibility
+        && request.resource.data.createdAt == resource.data.createdAt
+        && validEvent(request.resource.data, 'SHARED', request.auth.uid);
+      allow delete: if isApprovedMember() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
