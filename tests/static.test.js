@@ -43,8 +43,25 @@ test('realtime Firebase listeners and membership gate are wired', () => {
   const app = read('app.js');
   assert.ok((app.match(/onSnapshot/g) || []).length >= 4);
   assert.match(app, /doc\(database, 'members', user\.uid\)/);
-  assert.match(app, /member\.data\(\)\.active !== true/);
+  assert.match(app, /isActiveMemberSnapshot\(member\)/);
   assert.match(app, /signInWithPopup/);
+});
+
+test('unapproved Google accounts receive a safe UID enrollment screen', () => {
+  const app = read('app.js');
+  assert.match(app, />Account pending approval</);
+  assert.match(app, /data-pending-uid/);
+  assert.match(app, /pendingUid\.textContent = user\.uid/);
+  assert.match(app, /No personal, household, project, or Calendar data has been loaded\./);
+  assert.match(app, /data-pending-sign-out/);
+  assert.match(app, />Sign in with Google /);
+
+  const approvalBranch = app.indexOf('if (!isActiveMemberSnapshot(member)) return showPendingApproval(user);');
+  const storeCreation = app.indexOf('model.store = await createFirebaseStore', approvalBranch);
+  const listenerSubscription = app.indexOf('model.store.subscribe', storeCreation);
+  assert.ok(approvalBranch > -1, 'inactive membership must enter the pending screen');
+  assert.ok(storeCreation > approvalBranch, 'protected stores must be created only after approval');
+  assert.ok(listenerSubscription > storeCreation, 'realtime listeners must attach only after approval');
 });
 
 test('Firestore rules deny self-approval, isolate UIDs, and default deny', () => {

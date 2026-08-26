@@ -9,6 +9,10 @@ export const EVENT_CATEGORIES = Object.freeze(['Work', 'Doctor', 'Appointment', 
 export const EVENT_VISIBILITIES = Object.freeze(['PRIVATE', 'SHARED']);
 export const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events.owned';
 
+export function isActiveMemberSnapshot(snapshot) {
+  return Boolean(snapshot?.exists?.() && snapshot.data()?.active === true);
+}
+
 const DAILY_TASKS = Object.freeze([
   { id: 'move', label: 'Move for at least 20 minutes' },
   { id: 'reset', label: 'Reset one visible home surface' },
@@ -376,12 +380,24 @@ const APP_SHELL = `
         </div>
       </div>
       <div class="pp-access-panel">
-        <p class="pp-eyebrow">MEMBER ACCESS</p>
-        <h2>Your shared world.<br>Your private progress.</h2>
-        <p>Sign in with Google. Access is granted only when your Firebase UID is active in the private Pepperpots member list.</p>
-        <div class="pp-access-rule"></div>
-        <button class="pp-button pp-button--wide" type="button" data-sign-in>Continue with Google <span class="pp-button__arrow">→</span></button>
-        <button class="pp-button pp-button--ghost pp-button--wide" type="button" data-demo hidden>Open configuration-safe preview</button>
+        <div class="pp-access-intro" data-access-intro>
+          <p class="pp-eyebrow">MEMBER ACCESS</p>
+          <h2>Your shared world.<br>Your private progress.</h2>
+          <p>Sign in with Google. Access is granted only when your Firebase UID is active in the private Pepperpots member list.</p>
+          <div class="pp-access-rule"></div>
+          <button class="pp-button pp-button--wide" type="button" data-sign-in>Sign in with Google <span class="pp-button__arrow">→</span></button>
+          <button class="pp-button pp-button--ghost pp-button--wide" type="button" data-demo hidden>Open configuration-safe preview</button>
+        </div>
+        <section class="pp-pending" data-pending-account hidden aria-labelledby="pending-title">
+          <p class="pp-eyebrow">UID APPROVAL REQUIRED</p>
+          <h2 id="pending-title">Account pending approval</h2>
+          <p>Google sign-in succeeded, but this account cannot access Pepperpots data until Ghost approves its Firebase UID.</p>
+          <div class="pp-pending-uid"><span>Firebase UID</span><code data-pending-uid></code></div>
+          <button class="pp-button pp-button--wide" type="button" data-check-approval>Check approval <span class="pp-button__arrow">→</span></button>
+          <button class="pp-button pp-button--ghost pp-button--wide" type="button" data-copy-uid>Copy Firebase UID</button>
+          <button class="pp-button pp-button--ghost pp-button--wide" type="button" data-pending-sign-out>Sign out</button>
+          <p class="pp-pending-note">No personal, household, project, or Calendar data has been loaded.</p>
+        </section>
         <p class="pp-access-note" data-access-status role="status">Checking secure cloud configuration…</p>
       </div>
     </section>
@@ -520,6 +536,9 @@ export function mountPepperpots(root) {
 
   const accessScreen = query('[data-access-screen]');
   const appScreen = query('[data-app]');
+  const accessIntro = query('[data-access-intro]');
+  const pendingAccount = query('[data-pending-account]');
+  const pendingUid = query('[data-pending-uid]');
   const status = query('[data-access-status]');
   const toast = query('[data-toast]');
 
@@ -542,6 +561,9 @@ export function mountPepperpots(root) {
   function enterApp(user, demo = false) {
     model.user = user;
     model.demo = demo;
+    accessIntro.hidden = false;
+    pendingAccount.hidden = true;
+    pendingUid.textContent = '';
     accessScreen.hidden = true;
     appScreen.hidden = false;
     const displayName = user.displayName || 'Pepperpots member';
@@ -557,11 +579,26 @@ export function mountPepperpots(root) {
     model.unsubscribeData = null;
     model.calendarAccessToken = null;
     model.user = null;
+    model.personal = createDefaultPersonal();
+    model.home = createDefaultHome();
+    model.privateEvents = [];
+    model.sharedEvents = [];
     model.store = null;
     model.demo = false;
     appScreen.hidden = true;
     accessScreen.hidden = false;
+    accessIntro.hidden = false;
+    pendingAccount.hidden = true;
+    pendingUid.textContent = '';
     status.textContent = message;
+  }
+
+  function showPendingApproval(user) {
+    exitApp('Approval is checked securely against your Firebase UID.');
+    model.user = { uid: user.uid, displayName: user.displayName || '' };
+    accessIntro.hidden = true;
+    pendingAccount.hidden = false;
+    pendingUid.textContent = user.uid;
   }
 
   function renderStats(targetSelector) {
@@ -838,6 +875,21 @@ export function mountPepperpots(root) {
     await model.firebase?.auth.signOut(model.auth);
   }, { signal });
 
+  query('[data-pending-sign-out]').addEventListener('click', async () => {
+    await model.firebase?.auth.signOut(model.auth);
+  }, { signal });
+
+  query('[data-copy-uid]').addEventListener('click', async () => {
+    const uid = pendingUid.textContent;
+    if (!uid) return;
+    try {
+      await navigator.clipboard.writeText(uid);
+      showToast('Firebase UID copied.');
+    } catch {
+      showToast('Press and hold the Firebase UID to copy it.', true);
+    }
+  }, { signal });
+
   query('[data-sign-in]').addEventListener('click', async () => {
     if (!model.auth || !model.firebase) {
       showToast('Firebase Web configuration is not connected yet.', true);
@@ -873,16 +925,16 @@ export function mountPepperpots(root) {
       model.auth = model.firebase.auth.getAuth(app);
       const database = model.firebase.firestore.getFirestore(app);
       await model.firebase.auth.getRedirectResult(model.auth).catch(() => null);
-      model.unsubscribeAuth = model.firebase.auth.onAuthStateChanged(model.auth, async (user) => {
+      async function verifyMembership(user) {
         if (!user) return exitApp('Sign in with an approved Google account.');
         status.textContent = 'Checking Pepperpots membership…';
         const memberRef = model.firebase.firestore.doc(database, 'members', user.uid);
         const member = await model.firebase.firestore.getDoc(memberRef);
-        if (!member.exists() || member.data().active !== true) {
-          await model.firebase.auth.signOut(model.auth);
-          return exitApp('Access not approved. This Google account is not an active Pepperpots member.');
-        }
+        if (model.auth.currentUser?.uid !== user.uid) return false;
+        if (!isActiveMemberSnapshot(member)) return showPendingApproval(user);
         model.store = await createFirebaseStore(model.firebase.firestore, database, user.uid);
+        if (model.auth.currentUser?.uid !== user.uid) return false;
+        model.unsubscribeData?.();
         model.unsubscribeData = model.store.subscribe({
           onPersonal: (value) => { model.personal = normalizePersonal(value); renderToday(); renderHistory(); },
           onHome: (value) => { model.home = normalizeHome(value); renderSchedule(); renderProjects(); },
@@ -891,6 +943,25 @@ export function mountPepperpots(root) {
           onError: () => showToast('A realtime sync listener needs attention.', true),
         });
         enterApp({ uid: user.uid, displayName: member.data().displayName || user.displayName || 'Pepperpots member' });
+        return true;
+      }
+
+      query('[data-check-approval]').addEventListener('click', async () => {
+        try {
+          await verifyMembership(model.auth.currentUser);
+        } catch {
+          if (model.auth.currentUser) showPendingApproval(model.auth.currentUser);
+          status.textContent = 'Approval could not be checked yet. No Pepperpots data was loaded.';
+        }
+      }, { signal });
+
+      model.unsubscribeAuth = model.firebase.auth.onAuthStateChanged(model.auth, async (user) => {
+        try {
+          await verifyMembership(user);
+        } catch {
+          if (user && model.auth.currentUser?.uid === user.uid) showPendingApproval(user);
+          status.textContent = 'Membership could not be verified. No Pepperpots data was loaded.';
+        }
       });
     } catch (error) {
       status.textContent = 'Secure cloud setup could not start. No data was exposed.';

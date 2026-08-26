@@ -12,6 +12,7 @@ import {
   createDefaultPersonal,
   defaultVisibilityForCategory,
   eventCollectionPath,
+  isActiveMemberSnapshot,
   levelForXp,
   markTrailFinderComplete,
   nextStreak,
@@ -137,4 +138,11 @@ test('Weekly Trail Finder stores only a week completion marker', () => {
   const now = new Date('2026-08-22T18:00:00Z');
   const state = markTrailFinderComplete(createDefaultPersonal('2026-08-22'), now);
   assert.deepEqual(state.weeklyTrailFinder, { week: weekKey(now), completed: true });
+});
+
+test('only an existing active member snapshot passes approval', () => {
+  assert.equal(isActiveMemberSnapshot({ exists: () => true, data: () => ({ active: true }) }), true);
+  assert.equal(isActiveMemberSnapshot({ exists: () => true, data: () => ({ active: false }) }), false);
+  assert.equal(isActiveMemberSnapshot({ exists: () => false, data: () => ({ active: true }) }), false);
+  assert.equal(isActiveMemberSnapshot(null), false);
 });

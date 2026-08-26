@@ -134,8 +134,20 @@ img { max-width: 100%; }
   color: var(--ink);
 }
 .pp-access-panel h2 { margin: 0; font-size: clamp(2rem, 4vw, 3.7rem); letter-spacing: -.065em; line-height: .94; }
-.pp-access-panel > p { color: var(--muted); line-height: 1.6; }
+.pp-access-intro > p,
+.pp-pending > p { color: var(--muted); line-height: 1.6; }
 .pp-access-rule { height: 1px; background: var(--line); margin: 1.8rem 0; }
+.pp-pending { display: grid; gap: 1rem; }
+.pp-pending[hidden] { display: none; }
+.pp-pending .pp-eyebrow { margin-bottom: 0; }
+.pp-pending-uid {
+  padding: 1rem;
+  border: 1px solid var(--ink);
+  background: var(--mist);
+}
+.pp-pending-uid span { display: block; margin-bottom: .45rem; font-size: .72rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
+.pp-pending-uid code { display: block; overflow-wrap: anywhere; font-size: .82rem; user-select: all; }
+.pp-pending-note { margin: 0; font-size: .82rem; }
 .pp-access-note {
   padding: 1rem;
   border-left: 4px solid var(--pink);

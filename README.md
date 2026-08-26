@@ -59,7 +59,7 @@ The dedicated Firebase project is `pepperpots-27a39`, and the registered Web app
    ```
 
 4. Have each intended member attempt Google sign-in once. In **Authentication → Users**, copy the two UIDs.
-5. In Firestore, create exactly those two `members/<uid>` documents with `active: true`. Optional `displayName` is safe; private email addresses are not needed in the frontend.
+5. The first time an unapproved person signs in, Pepperpots shows a fail-closed **Account pending approval** screen with only that person's Firebase UID. It does not attach personal or household listeners. Create exactly two `members/<uid>` documents with `active: true`; use `displayName: "Ghost"` and `displayName: "Pepperpots"`. Private email addresses are not needed in the frontend. The pending member can then choose **Check approval** without entering a password again.
 
 The Firebase Web configuration is a public project identifier. Authorization depends on Authentication plus `firestore.rules`, never on hiding the Web API key.
 
